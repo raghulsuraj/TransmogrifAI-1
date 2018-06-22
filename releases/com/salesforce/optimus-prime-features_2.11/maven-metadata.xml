@@ -3,7 +3,7 @@
   <groupId>com.salesforce</groupId>
   <artifactId>optimus-prime-features_2.11</artifactId>
   <versioning>
-    <release>3.3.1</release>
+    <release>3.3.3</release>
     <versions>
       <version>3.1.2</version>
       <version>3.2.0</version>
@@ -11,7 +11,8 @@
       <version>3.2.4</version>
       <version>3.3.0</version>
       <version>3.3.1</version>
+      <version>3.3.3</version>
     </versions>
-    <lastUpdated>20180601213224</lastUpdated>
+    <lastUpdated>20180622203942</lastUpdated>
   </versioning>
 </metadata>
