@@ -32,6 +32,7 @@ package com.salesforce.op.filters
 
 import com.bigml.histogram.Histogram
 import com.salesforce.op.features.TransientFeature
+import com.salesforce.op.features.types.FeatureType
 import com.salesforce.op.stages.impl.feature.{Inclusion, NumericBucketizer}
 import com.twitter.algebird.Semigroup
 import com.twitter.algebird.Monoid._

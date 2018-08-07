@@ -30,24 +30,18 @@
 
 package com.salesforce.op.filters
 
-trait FiltersTestData {
+import com.salesforce.op.features.types.FeatureType
 
-  protected val eps = 1E-2
+trait ContinuousDistribution[T <: FeatureType] extends Distribution[T] {
 
-  protected val trainSummaries = Map(
-    ("A", None) -> FeatureDistribution(10).copy(10, 1).update(Array[Double](1, 4, 0, 0, 6): _*),
-    ("B", None) -> FeatureDistribution(10).copy(20, 20).update(Array[Double](2, 8, 0, 0, 12): _*),
-    ("C", Option("1")) -> FeatureDistribution(10).copy(10, 1).update(Array[Double](1, 4, 0, 0, 6): _*),
-    ("C", Option("2")) -> FeatureDistribution(10).copy(20, 19).update(Array[Double](2, 8, 0, 0, 12): _*),
-    ("D", Option("1")) -> FeatureDistribution(10).copy(10, 9).update(Array[Double](1, 4, 0, 0, 6): _*),
-    ("D", Option("2")) -> FeatureDistribution(10).copy(20, 19).update(Array[Double](2, 8, 0, 0, 12): _*))
+  def density(x: Double): Double
 
-  protected val scoreSummaries = Map(
-    ("A", None) -> FeatureDistribution(10).copy(10, 8).update(Array[Double](1, 4, 0, 0, 6): _*),
-    ("B", None) -> FeatureDistribution(10).copy(20, 20).update(Array[Double](2, 8, 0, 0, 12): _*),
-    ("C", Option("1")) -> FeatureDistribution(10).copy(10, 1).update(Array[Double](0, 0, 10, 10, 0): _*),
-    ("C", Option("2")) -> FeatureDistribution(10).copy(20, 19).update(Array[Double](2, 8, 0, 0, 12): _*),
-    ("D", Option("1")) -> FeatureDistribution(10).copy(0, 0).update(Array[Double](0, 0, 0, 0, 0): _*),
-    ("D", Option("2")) -> FeatureDisribution(190).copy(0, 0).update(Array[Double](0, 0, 0, 0, 0): _*)
-  )
+  final def jsDivergence(dist: ContinuousDistribution[T], n: Int): Double = {
+    val f: Distribution[T] => Double => Double = _ match {
+      case d: ContinuousDistribution[_] => d.asInstanceOf[ContinuousDistribution[T]].density(_)
+      case _ => throw new RuntimeException("Attempting to compare incompatible distributions")
+    }
+
+    jsFunc(dist, f)(mcSample(dist, n))
+  }
 }
