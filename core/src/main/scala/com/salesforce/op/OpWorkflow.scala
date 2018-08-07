@@ -500,10 +500,10 @@ class OpWorkflow(val uid: String = UID[OpWorkflow]) extends OpWorkflowCore {
   def withRawFeatureFilter[T](
     trainingReader: Option[Reader[T]],
     scoringReader: Option[Reader[T]],
-    bins: Int = 100,
     minFillRate: Double = 0.001,
     maxFillDifference: Double = 0.90,
     maxFillRatioDiff: Double = 20.0,
+    maxCJSDivergence: Double = 0.90,
     maxJSDivergence: Double = 0.90,
     maxCorrelation: Double = 0.95,
     correlationType: CorrelationType = CorrelationType.Pearson,
@@ -517,10 +517,10 @@ class OpWorkflow(val uid: String = UID[OpWorkflow]) extends OpWorkflowCore {
       new RawFeatureFilter(
         trainingReader = training.get,
         scoreReader = scoringReader,
-        bins = bins,
         minFill = minFillRate,
         maxFillDifference = maxFillDifference,
         maxFillRatioDiff = maxFillRatioDiff,
+        maxCJSDivergence = maxJSDivergence,
         maxJSDivergence = maxJSDivergence,
         maxCorrelation = maxCorrelation,
         correlationType = correlationType,

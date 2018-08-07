@@ -34,21 +34,20 @@ trait FiltersTestData {
 
   protected val eps = 1E-2
 
-  protected val trainSummaries = Seq(
-    FeatureDistribution("A", None, 10, 1, Array(1, 4, 0, 0, 6), Array.empty),
-    FeatureDistribution("B", None, 20, 20, Array(2, 8, 0, 0, 12), Array.empty),
-    FeatureDistribution("C", Some("1"), 10, 1, Array(1, 4, 0, 0, 6), Array.empty),
-    FeatureDistribution("C", Some("2"), 20, 19, Array(2, 8, 0, 0, 12), Array.empty),
-    FeatureDistribution("D", Some("1"), 10, 9, Array(1, 4, 0, 0, 6), Array.empty),
-    FeatureDistribution("D", Some("2"), 20, 19, Array(2, 8, 0, 0, 12), Array.empty)
-  )
+  protected val trainSummaries: Map[FeatureKey, FeatureDistribution] = Map(
+    ("A", None) -> FeatureDistribution(10).copy(10, 1).update(Array[Double](1, 4, 0, 0, 6): _*),
+    ("B", None) -> FeatureDistribution(10).copy(20, 20).update(Array[Double](2, 8, 0, 0, 12): _*),
+    ("C", Option("1")) -> FeatureDistribution(10).copy(10, 1).update(Array[Double](1, 4, 0, 0, 6): _*),
+    ("C", Option("2")) -> FeatureDistribution(10).copy(20, 19).update(Array[Double](2, 8, 0, 0, 12): _*),
+    ("D", Option("1")) -> FeatureDistribution(10).copy(10, 9).update(Array[Double](1, 4, 0, 0, 6): _*),
+    ("D", Option("2")) -> FeatureDistribution(10).copy(20, 19).update(Array[Double](2, 8, 0, 0, 12): _*))
 
-  protected val scoreSummaries = Seq(
-    FeatureDistribution("A", None, 10, 8, Array(1, 4, 0, 0, 6), Array.empty),
-    FeatureDistribution("B", None, 20, 20, Array(2, 8, 0, 0, 12), Array.empty),
-    FeatureDistribution("C", Some("1"), 10, 1, Array(0, 0, 10, 10, 0), Array.empty),
-    FeatureDistribution("C", Some("2"), 20, 19, Array(2, 8, 0, 0, 12), Array.empty),
-    FeatureDistribution("D", Some("1"), 0, 0, Array(0, 0, 0, 0, 0), Array.empty),
-    FeatureDistribution("D", Some("2"), 0, 0, Array(0, 0, 0, 0, 0), Array.empty)
+  protected val scoreSummaries = Map(
+    ("A", None) -> FeatureDistribution(10).copy(10, 8).update(Array[Double](1, 4, 0, 0, 6): _*),
+    ("B", None) -> FeatureDistribution(10).copy(20, 20).update(Array[Double](2, 8, 0, 0, 12): _*),
+    ("C", Option("1")) -> FeatureDistribution(10).copy(10, 1).update(Array[Double](0, 0, 10, 10, 0): _*),
+    ("C", Option("2")) -> FeatureDistribution(10).copy(20, 19).update(Array[Double](2, 8, 0, 0, 12): _*),
+    ("D", Option("1")) -> FeatureDistribution(10).copy(0, 0).update(Array[Double](0, 0, 0, 0, 0): _*),
+    ("D", Option("2")) -> FeatureDisribution(190).copy(0, 0).update(Array[Double](0, 0, 0, 0, 0): _*)
   )
 }

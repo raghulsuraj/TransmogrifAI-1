@@ -20,6 +20,11 @@ dependencies {
     compile "org.apache.lucene:lucene-analyzers-opennlp:$luceneVersion"
     compile "org.apache.lucene:lucene-suggest:$luceneVersion"
 
+    // Adaptive histogram binning
+    compile("bigml:histogram:$histogramVersion") {
+      exclude group: "org.clojure", module: "clojure"
+    }
+
     // Scopt
     compile "com.github.scopt:scopt_$scalaVersion:$scoptVersion"
 }

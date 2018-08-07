@@ -54,8 +54,8 @@ private[filters] case class PreparedFeatures(
    *
    * @return pair consisting of response and predictor summaries (in this order)
    */
-  def summaries: (Map[FeatureKey, Summary], Map[FeatureKey, Summary]) =
-    responses.mapValues(Summary(_)) -> predictors.mapValues(Summary(_))
+  def featureKeys: (Set[FeatureKey], Set[FeatureKey]) =
+    responses.keySet -> predictors.keySet
 
   /**
    * Computes vector of size responseKeys.length + predictorKeys.length. The first responses.length
@@ -86,32 +86,24 @@ private[filters] case class PreparedFeatures(
    * @return a pair consisting of response and predictor feature distributions (in this order)
    */
   def getFeatureDistributions(
-    responseSummaries: Array[(FeatureKey, Summary)],
-    predictorSummaries: Array[(FeatureKey, Summary)],
-    bins: Int,
-    hasher: HashingTF
-  ): (Array[FeatureDistribution], Array[FeatureDistribution]) = {
-    val responseFeatureDistributions: Array[FeatureDistribution] =
-      getFeatureDistributions(responses, responseSummaries, bins, hasher)
-    val predictorFeatureDistributions: Array[FeatureDistribution] =
-      getFeatureDistributions(predictors, predictorSummaries, bins, hasher)
+    hasher: HashingTF,
+    maxBins: Int): (Map[FeatureKey, FeatureDistribution], Map[FeatureKey, FeatureDistribution]) = {
+    val responseFeatureDistributions = getFeatureDistributions(responses, hasher, maxBins)
+    val predictorFeatureDistributions = getFeatureDistributions(predictors, hasher, maxBins)
 
     responseFeatureDistributions -> predictorFeatureDistributions
   }
 
   private def getFeatureDistributions(
     features: Map[FeatureKey, ProcessedSeq],
-    summaries: Array[(FeatureKey, Summary)],
-    bins: Int,
-    hasher: HashingTF
-  ): Array[FeatureDistribution] = summaries.map { case (featureKey, summary) =>
-    FeatureDistribution(
-      featureKey = featureKey,
-      summary = summary,
-      value = features.get(featureKey),
-      bins = bins,
-      hasher = hasher)
-  }
+    hasher: HashingTF,
+    maxBins: Int): Map[FeatureKey, FeatureDistribution] =
+    features.mapValues { seq =>
+      FeatureDistribution(
+        value = seq,
+        hasher = hasher,
+        maxBins = maxBins)
+    }
 }
 
 private[filters] object PreparedFeatures {

@@ -72,19 +72,19 @@ class RawFeatureFilter[T]
 (
   val trainingReader: Reader[T],
   val scoreReader: Option[Reader[T]],
-  val bins: Int,
   val minFill: Double,
   val maxFillDifference: Double,
   val maxFillRatioDiff: Double,
+  val maxCJSDivergence: Double,
   val maxJSDivergence: Double,
   val maxCorrelation: Double,
   val correlationType: CorrelationType = CorrelationType.Pearson,
+  val cjsDivergenceProtectedFeatures: Set[String] = Set.empty,
   val jsDivergenceProtectedFeatures: Set[String] = Set.empty,
-  val protectedFeatures: Set[String] = Set.empty
+  val protectedFeatures: Set[String] = Set.empty,
+  val maxBins: Int = FeatureDistribution.DefaultMaxBins
 ) extends Serializable {
 
-  assert(bins > 1 && bins <= FeatureDistribution.MaxBins, s"Invalid bin size $bins," +
-    s" bins must be between 1 and ${FeatureDistribution.MaxBins}")
   assert(minFill >= 0.0 && minFill <= 1.0, s"Invalid minFill size $minFill, minFill must be between 0 and 1")
   assert(maxFillDifference >= 0.0 && maxFillDifference <= 1.0, s"Invalid maxFillDifference size $maxFillDifference," +
     s" maxFillDifference must be between 0 and 1")
@@ -95,10 +95,9 @@ class RawFeatureFilter[T]
 
   @transient protected lazy val log = LoggerFactory.getLogger(this.getClass)
 
-  private val hasher: HashingTF = new HashingTF(numFeatures = bins)
+  private val hasher: HashingTF = new HashingTF(numFeatures = maxBins)
     .setBinary(false)
     .setHashAlgorithm(HashAlgorithm.MurMur3.toString.toLowerCase)
-
 
   /**
    * Get binned counts of the feature distribution and empty count for each raw feature
@@ -127,25 +126,20 @@ class RawFeatureFilter[T]
     }
     val preparedFeatures: RDD[PreparedFeatures] =
       data.rdd.map(PreparedFeatures(_, responses, predictors))
-    // Have to use the training summaries do process scoring for comparison
-    val (responseSummaries, predictorSummaries): (Map[FeatureKey, Summary], Map[FeatureKey, Summary]) =
-      allFeatureInfo.map(info => info.responseSummaries -> info.predictorSummaries)
-        .getOrElse(preparedFeatures.map(_.summaries).reduce(_ + _))
-    val (responseSummariesArr, predictorSummariesArr): (Array[(FeatureKey, Summary)], Array[(FeatureKey, Summary)]) =
-      (responseSummaries.toArray, predictorSummaries.toArray)
-    val (responseDistributions, predictorDistributions): (Array[FeatureDistribution], Array[FeatureDistribution]) =
+
+    val (responseDists, predictorDists): (Map[FeatureKey, FeatureDistribution], Map[FeatureKey, FeatureDistribution]) =
       preparedFeatures
-        .map(_.getFeatureDistributions(
-          responseSummaries = responseSummariesArr,
-          predictorSummaries = predictorSummariesArr,
-          bins = bins,
-          hasher = hasher))
-        .reduce(_ + _) // NOTE: resolved semigroup is IndexedSeqSemigroup
+        .map(f => f.getFeatureDistributions(hasher = hasher, maxBins = maxBins) -> 1.0)
+        .reduce(_ + _) match {
+        case ((rdists, pdists), count) =>
+          val f: FeatureDistribution => FeatureDistribution = d => d.copy(nullCount = count - d.nullCount)
+          rdists.mapValues(f) -> pdists.mapValues(f)
+      }
+    val (responseKeys, predictorKeys): (Array[FeatureKey], Array[FeatureKey]) =
+      responseDists.map(_._1).toArray -> predictorDists.map(_._1).toArray
     val correlationInfo: Map[FeatureKey, Map[FeatureKey, Double]] =
       allFeatureInfo.map(_.correlationInfo).getOrElse {
         val emptyCorr: Map[FeatureKey, Map[FeatureKey, Double]] = Map()
-        val responseKeys: Array[FeatureKey] = responseSummariesArr.map(_._1)
-        val predictorKeys: Array[FeatureKey] = predictorSummariesArr.map(_._1)
         val corrRDD: RDD[Vector] = preparedFeatures.map(_.getNullLabelLeakageVector(responseKeys, predictorKeys))
         val corrMatrix: Matrix = Statistics.corr(corrRDD, correlationType.sparkName)
 
@@ -157,10 +151,8 @@ class RawFeatureFilter[T]
       }
 
     AllFeatureInformation(
-      responseSummaries = responseSummaries,
-      responseDistributions = responseDistributions,
-      predictorSummaries = predictorSummaries,
-      predictorDistributions = predictorDistributions,
+      responseDistributions = responseDists,
+      predictorDistributions = predictorDists,
       correlationInfo = correlationInfo)
   }
 
@@ -174,76 +166,75 @@ class RawFeatureFilter[T]
    *         Map(featureName -> key)
    */
   private[op] def getFeaturesToExclude(
-    trainingDistribs: Seq[FeatureDistribution],
-    scoringDistribs: Seq[FeatureDistribution],
+    trainingDistribs: Map[FeatureKey, FeatureDistribution],
+    scoringDistribs: Map[FeatureKey, FeatureDistribution],
     correlationInfo: Map[FeatureKey, Map[FeatureKey, Double]]
   ): (Seq[String], Map[String, Set[String]]) = {
+    val trainingReasons: Map[FeatureKey, List[String]] = for {
+      trainingPair <- trainingDistribs
+      (featureKey, trainingDistrib) = trainingPair
+      // scoringDistrib <- scoringDistribs.get(featureKey)
+    } yield {
+      val trainingUnfilled =
+        if (trainingDistrib.fillRate >= minFill) None
+        else Option(s"training fill rate did not meet min required ($minFill)")
+      val trainingNullLabelLeaker =
+        if (correlationInfo.map(_._2.get(featureKey).forall(_ <= maxCorrelation)).forall(identity(_))) None
+        else Option(s"null indicator correlation (absolute) exceeded max allowed ($maxCorrelation)")
 
-    def logExcluded(excluded: Seq[Boolean], message: String): Unit = {
-      val featuresDropped = trainingDistribs.zip(excluded)
-        .collect{ case (f, d) if d => s"${f.name} ${f.key.getOrElse("")}" }
-      log.info(s"$message: ${featuresDropped.mkString(", ")}")
+      featureKey -> List(trainingUnfilled, trainingNullLabelLeaker).flatten
+    }
+    val distribMismatches: Map[FeatureKey, List[String]] = for {
+      scoringPair <- scoringDistribs
+      (featureKey, scoringDistrib) = scoringPair
+      trainingDistrib <- trainingDistribs.get(featureKey)
+    } yield {
+      val scoringFillRate = scoringDistrib.fillRate
+      val trainingFillRate = trainingDistrib.fillRate
+      val cjsDivergence = trainingDistrib.cjsDivergence(scoringDistrib)
+      val jsDivergence = trainingDistrib.jsDivergence(scoringDistrib)
+      val fillRatioDiff = trainingDistrib.relativeFillRatio(scoringDistrib)
+      val fillRateDiff = trainingDistrib.relativeFillRatio(scoringDistrib)
+
+      log.info(s"\nTraining Histogram=${trainingDistrib.histogram}\n" +
+        s"Scoring Histogram=${scoringDistrib.histogram}\n" +
+        s"Train Fill=$trainingFillRate, Score Fill=$scoringFillRate, " +
+        s"CJS Divergence $cjsDivergence, JS Divergence=$jsDivergence, " +
+        s"Fill Rate Difference=$fillRateDiff, Fill Ratio Difference=$fillRatioDiff")
+
+      val scoringUnfilled =
+        if (scoringDistrib.fillRate >= minFill) None
+        else Option(s"scoring fill rate did not meet min required ($minFill)")
+      val cjsDivergenceCheck =
+        if (cjsDivergenceProtectedFeatures.contains(featureKey._1) || cjsDivergence <= maxJSDivergence) None
+        else Option(s"CJS Divergence exceeded max allowed ($maxCJSDivergence)")
+      val jsDivergenceCheck =
+        if (jsDivergenceProtectedFeatures.contains(featureKey._1) || jsDivergence <= maxJSDivergence) None
+        else Option(s"JS Divergence exceeded max allowed ($maxJSDivergence)")
+      val fillRateCheck =
+        if (fillRateDiff <= maxFillDifference) None
+        else Option(s"fill rate difference exceeded max allowed ($maxFillDifference)")
+      val fillRatioCheck =
+        if (fillRatioDiff <= maxFillRatioDiff) None
+        else Option(s"fill ratio difference exceeded max allowed ($maxFillRatioDiff)")
+
+      featureKey ->
+        List(scoringUnfilled, cjsDivergenceCheck, jsDivergenceCheck, fillRateCheck, fillRatioCheck).flatten
+    }
+    val allReasons = trainingReasons + distribMismatches // NOTE: Uses Algebird's Map monoid
+    val toDrop: Map[FeatureKey, List[String]] = allReasons.filter(_._2.nonEmpty)
+    val toKeep: Map[FeatureKey, List[String]] = allReasons.filter(_._2.isEmpty)
+
+    toDrop.foreach { case (featureKey, reasons) =>
+      log.info(s"Dropping feature $featureKey because:\n\t${reasons.mkString("\n\t")}\n")
     }
 
-    val featureSize = trainingDistribs.length
-
-    val trainingUnfilled = trainingDistribs.map(_.fillRate() < minFill)
-    logExcluded(trainingUnfilled, s"Features excluded because training fill rate did not meet min required ($minFill)")
-
-    val trainingNullLabelLeakers = {
-      if (correlationInfo.isEmpty) Seq.fill(featureSize)(false)
-      else {
-        val absoluteCorrs = correlationInfo.map(_._2)
-        for {distrib <- trainingDistribs} yield {
-          // Only filter if feature absolute null-label leakage correlation is greater than allowed correlation
-          val nullLabelLeakerIndicators = absoluteCorrs.map(_.get(distrib.featureKey).exists(_ > maxCorrelation))
-          nullLabelLeakerIndicators.exists(identity(_))
-        }
-      }
-    }
-    logExcluded(
-      trainingNullLabelLeakers,
-      s"Features excluded because null indicator correlation (absolute) exceeded max allowed ($maxCorrelation)")
-
-    val scoringUnfilled =
-      if (scoringDistribs.nonEmpty) {
-        assert(scoringDistribs.length == featureSize, "scoring and training features must match")
-        val su = scoringDistribs.map(_.fillRate() < minFill)
-        logExcluded(su, s"Features excluded because scoring fill rate did not meet min required ($minFill)")
-        su
-      } else {
-        Seq.fill(featureSize)(false)
-      }
-
-    val distribMismatches =
-      if (scoringDistribs.nonEmpty) {
-        val combined = trainingDistribs.zip(scoringDistribs)
-        log.info(combined.map { case (t, s) => s"\n$t\n$s\nTrain Fill=${t.fillRate()}, Score Fill=${s.fillRate()}, " +
-          s"JS Divergence=${t.jsDivergence(s)}, Fill Rate Difference=${t.relativeFillRate(s)}, " +
-          s"Fill Ratio Difference=${t.relativeFillRatio(s)}" }.mkString("\n"))
-        val kl = combined.map { case (t, s) =>
-          !jsDivergenceProtectedFeatures.contains(t.name) && t.jsDivergence(s) > maxJSDivergence
-        }
-        logExcluded(kl, s"Features excluded because JS Divergence exceeded max allowed ($maxJSDivergence)")
-        val mf = combined.map { case (t, s) => t.relativeFillRate(s) > maxFillDifference }
-        logExcluded(mf, s"Features excluded because fill rate difference exceeded max allowed ($maxFillDifference)")
-        val mfr = combined.map { case (t, s) => t.relativeFillRatio(s) > maxFillRatioDiff }
-        logExcluded(mfr, s"Features excluded because fill ratio difference exceeded max allowed ($maxFillRatioDiff)")
-        kl.zip(mf).zip(mfr).map{ case ((a, b), c) => a || b || c }
-      } else {
-        Seq.fill(featureSize)(false)
-      }
-
-    val allExcludeReasons = trainingUnfilled.zip(scoringUnfilled).zip(distribMismatches).zip(trainingNullLabelLeakers)
-      .map{ case (((t, s), d), n) => t || s || d || n }
-
-    val (toDrop, toKeep) = trainingDistribs.zip(allExcludeReasons).partition(_._2)
-
-    val toDropFeatures = toDrop.map(_._1).groupBy(_.name)
-    val toKeepFeatures = toKeep.map(_._1).groupBy(_.name)
+    val toDropFeatures = toDrop.map(_._1).groupBy(_._1)
+    val toKeepFeatures = toKeep.map(_._1).groupBy(_._1)
     val mapKeys = toKeepFeatures.keySet.intersect(toDropFeatures.keySet)
-    val toDropNames = toDropFeatures.collect{ case (k, _) if !mapKeys.contains(k) => k }.toSeq
-    val toDropMapKeys = toDropFeatures.collect{ case (k, v) if mapKeys.contains(k) => k -> v.flatMap(_.key).toSet }
+    val toDropNames = toDropFeatures.collect { case (k, _) if !mapKeys.contains(k) => k }.toSeq
+    val toDropMapKeys = toDropFeatures.collect { case (k, v) if mapKeys.contains(k) => k -> v.flatMap(_._2).toSet }
+
     toDropNames -> toDropMapKeys
   }
 
@@ -285,8 +276,10 @@ class RawFeatureFilter[T]
     }
 
     val (featuresToDropNames, mapKeysToDrop) = getFeaturesToExclude(
-      trainingSummary.predictorDistributions.filterNot(d => protectedFeatures.contains(d.name)),
-      scoringSummary.toSeq.flatMap(_.predictorDistributions.filterNot(d => protectedFeatures.contains(d.name))),
+      trainingSummary.predictorDistributions.filterNot { case ((name, _), _) => protectedFeatures.contains(name) },
+      scoringSummary.toSeq
+        .flatMap(_.predictorDistributions.filterNot { case ((name, _), _) => protectedFeatures.contains(name) })
+        .toMap,
       trainingSummary.correlationInfo)
     val (featuresToDrop, featuresToKeep) = rawFeatures.partition(rf => featuresToDropNames.contains(rf.name))
     val featuresToKeepNames = Array(DataFrameFieldNames.KeyFieldName) ++ featuresToKeep.map(_.name)
