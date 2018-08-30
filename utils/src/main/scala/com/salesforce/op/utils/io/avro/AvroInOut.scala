@@ -32,7 +32,6 @@ package com.salesforce.op.utils.io.avro
 
 import java.net.URI
 
-import com.salesforce.op.utils.io.DirectOutputCommitter
 import com.salesforce.op.utils.spark.RichRDD._
 import org.apache.avro.Schema
 import org.apache.avro.generic.GenericRecord
@@ -94,7 +93,7 @@ object AvroInOut {
       case ex: Exception => throw new IllegalArgumentException(s"Bad path $firstPath: ${ex.getMessage}")
     }
     val found = paths.filter(p => fs.exists(new Path(p)))
-    if (found.isEmpty) throw new IllegalArgumentException("No valid directory found in the list of paths <<$path>>")
+    if (found.isEmpty) throw new IllegalArgumentException(s"No valid directory found in the list of paths <<$path>>")
     found.mkString(",")
   }
 
@@ -156,7 +155,6 @@ object AvroInOut {
 
     private def createJobConfFromContext(schema: String)(implicit sc: SparkSession) = {
       val jobConf = new JobConf(sc.sparkContext.hadoopConfiguration)
-      jobConf.setOutputCommitter(classOf[DirectOutputCommitter])
       AvroJob.setOutputSchema(jobConf, new Schema.Parser().parse(schema))
       jobConf
     }
